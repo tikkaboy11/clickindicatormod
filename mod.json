@@ -285,7 +285,8 @@
             "resources/hitcircle2x.png",
             "resources/taikohitcircle.png",
             "resources/taikohitcircleoverlay.png",
-            "resources/sliderfollowcircle.png"
+            "resources/sliderfollowcircle.png",
+            "resources/cue-click.wav"
         ]
     }
 }
