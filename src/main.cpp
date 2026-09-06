@@ -253,7 +253,9 @@ struct Look {
     double offset;
     bool  showPlayer, showLane, laneLeft, showAccuracy, splitLane, edgeMarker;
     bool  holdTracks, pressBadge, playerSquare, circleNotes, flipLane, laneMiddle;
+    bool  audioCue;
     float badgeSize, laneWindow, laneScale, laneDepth, midHit;
+    float audioCueVolume;
     // real time, not frames, so a window means the same on every macro
     double perfectSec, okSec;
     int   maxNotes;
@@ -294,6 +296,11 @@ static Look readSettings() {
     l.perfectSec    = double(Mod::get()->getSettingValue<int64_t>("perfect-ms")) / 1000.0;
     l.okSec         = double(Mod::get()->getSettingValue<int64_t>("ok-ms")) / 1000.0;
     l.maxNotes      = int(Mod::get()->getSettingValue<int64_t>("max-notes"));
+    l.audioCue      = Mod::get()->getSettingValue<bool>("audio-cue");
+    l.audioCueVolume = std::clamp(
+        float(Mod::get()->getSettingValue<int64_t>("audio-cue-volume")) / 100.f,
+        0.f, 1.f
+    );
     return l;
 }
 
@@ -478,6 +485,7 @@ static Look readSettingsCached() {
 static const char* kDisc   = "bogdoner.click-indicators/taikohitcircle.png";
 static const char* kRing   = "bogdoner.click-indicators/taikohitcircleoverlay.png";
 static const char* kTarget = "bogdoner.click-indicators/sliderfollowcircle.png";
+static const char* kCue    = "bogdoner.click-indicators/cue-click.wav";
 
 class $modify(IndicatorLayer, PlayLayer) {
     struct Portal { float x; float v; };
@@ -568,6 +576,9 @@ class $modify(IndicatorLayer, PlayLayer) {
 
         size_t cursor = 0;
         size_t missCursor = 0;
+        size_t cueCursor = 0;
+        double lastCueNow = 0.0;
+        bool cueClockReady = false;
 
         int nPerfect = 0, nOk = 0, nMiss = 0;
         double verdictAt = -10.0;
@@ -904,6 +915,8 @@ class $modify(IndicatorLayer, PlayLayer) {
             f->state.clear();
             f->judged.clear();
             f->cursor = f->missCursor = 0;
+            f->cueCursor = 0;
+            f->cueClockReady = false;
         }
         f->nPerfect = f->nOk = f->nMiss = 0;
         if (f->world) f->world->clear();
@@ -1040,6 +1053,8 @@ class $modify(IndicatorLayer, PlayLayer) {
         f->measT0 = 0.0;
         f->cursor = 0;
         f->missCursor = 0;
+        f->cueCursor = 0;
+        f->cueClockReady = false;
         f->fallbackNow = 0.0;
         f->clockBase = 0.0;
         f->clockAccum = 0.0;
@@ -1275,6 +1290,42 @@ class $modify(IndicatorLayer, PlayLayer) {
         return S[lo].x + float((raw - S[lo].t) * S[lo].v);
     }
 
+    // Play exactly one cue as each scheduled press crosses the hit time.
+    // This has its own cursor instead of using the visual/scoring state: an
+    // early real click can mark a note done before its scheduled time, but the
+    // timing cue still needs to happen. On the first update after a checkpoint
+    // or macro reload, old presses are skipped instead of being played in a
+    // burst.
+    void playAudioCues(double now, Look const& L) {
+        auto f = m_fields.self();
+
+        if (!f->cueClockReady || now + 0.001 < f->lastCueNow) {
+            f->cueClockReady = true;
+            f->cueCursor = 0;
+            const double recent = now - 0.06;
+            while (f->cueCursor < f->holds.size()
+                   && double(f->holds[f->cueCursor].start) / f->fps < recent)
+                ++f->cueCursor;
+        }
+
+        while (f->cueCursor < f->holds.size()) {
+            auto const& h = f->holds[f->cueCursor];
+            const double pressAt = double(h.start) / f->fps;
+            if (pressAt > now) break;
+
+            // P2 cues only make sense while a dual section is actually live.
+            const bool audible = !h.player2 || this->m_gameState.m_isDualMode;
+            if (audible && L.audioCue && L.audioCueVolume > 0.001f) {
+                FMODAudioEngine::sharedEngine()->playEffect(
+                    kCue, 1.f, 0.f, L.audioCueVolume
+                );
+            }
+            ++f->cueCursor;
+        }
+
+        f->lastCueNow = now;
+    }
+
     // FRAMES
 
     void postUpdate(float dt) {
@@ -1437,6 +1488,8 @@ class $modify(IndicatorLayer, PlayLayer) {
 
         const double macroNow = absTime();
         const double now = macroNow - L.offset;
+
+        if (alive) playAudioCues(now, L);
 
         // no if statements aura this checksoff Bravo 3 checkmark which kinda works?
         const int w = f->pressWrite.load(std::memory_order_acquire);
@@ -1643,6 +1696,8 @@ class $modify(IndicatorLayer, PlayLayer) {
         f->judged.assign(f->holds.size(), 0);
         f->cursor = 0;
         f->missCursor = 0;
+        f->cueCursor = 0;
+        f->cueClockReady = false;
         f->firstPressFrame = f->holds.empty() ? 0 : f->holds.front().start;
 
         log::info("{} presses ({}), offset {}f, first press at {:.3f}s",
