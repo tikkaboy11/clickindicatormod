@@ -485,7 +485,6 @@ static Look readSettingsCached() {
 static const char* kDisc   = "bogdoner.click-indicators/taikohitcircle.png";
 static const char* kRing   = "bogdoner.click-indicators/taikohitcircleoverlay.png";
 static const char* kTarget = "bogdoner.click-indicators/sliderfollowcircle.png";
-static const char* kCue    = "bogdoner.click-indicators/cue-click.wav";
 
 class $modify(IndicatorLayer, PlayLayer) {
     struct Portal { float x; float v; };
@@ -1316,8 +1315,11 @@ class $modify(IndicatorLayer, PlayLayer) {
             // P2 cues only make sense while a dual section is actually live.
             const bool audible = !h.player2 || this->m_gameState.m_isDualMode;
             if (audible && L.audioCue && L.audioCueVolume > 0.001f) {
+                static const auto cuePath = geode::utils::string::pathToString(
+                    Mod::get()->getResourcesDir() / "cue-click.wav"
+                );
                 FMODAudioEngine::sharedEngine()->playEffect(
-                    kCue, 1.f, 0.f, L.audioCueVolume
+                    cuePath, 1.f, 0.f, L.audioCueVolume
                 );
             }
             ++f->cueCursor;
